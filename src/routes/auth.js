@@ -7,7 +7,10 @@ const {
   getClientCapabilities,
   signalUnknownCredential,
   signalAllAcceptedCredentials,
-  signalCurrentUserDetails
+  signalCurrentUserDetails,
+  deleteCredential,
+  deleteAllUserCredentials,
+  revokeCredential
 } = require('../controllers/authController');
 
 const router = express.Router();
@@ -19,6 +22,11 @@ router.post('/register/finish', finishRegistration);
 // Authentication routes
 router.post('/authenticate/start', startAuthentication);
 router.post('/authenticate/finish', finishAuthentication);
+
+// Deletion routes
+router.delete('/credential', deleteCredential);
+router.delete('/user/credentials', deleteAllUserCredentials);
+router.patch('/credential/revoke', revokeCredential);
 
 // WebAuthn Level 3 specific routes
 router.get('/capabilities', getClientCapabilities);

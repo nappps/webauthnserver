@@ -1,11 +1,6 @@
-const {
-  generateRegistrationOptions,
-  verifyRegistrationResponse,
-} = require('../spec');
-const { Buffer } = require('buffer');
-
-// In-memory storage for challenges (in production, use Redis or database)
-const challenges = new Map();
+const registrationService = require('../services/registrationService');
+const authenticationService = require('../services/authenticationService');
+const deletionService = require('../services/deletionService');
 
 // Registration
 const startRegistration = async (req, res) => {
@@ -16,39 +11,7 @@ const startRegistration = async (req, res) => {
       return res.status(400).json({ error: 'Username is required' });
     }
 
-    // Generate registration options
-    const options = await generateRegistrationOptions({
-      rpName: 'WebAuthn Level 3 Server',
-      rpID: process.env.RP_ID || 'localhost',
-      userID: username,
-      userName: username,
-      displayName: displayName || username,
-      attestationType: 'none', // 'none', 'indirect', 'direct'
-
-      // Specify authenticator selection criteria
-      authenticatorSelection: {
-        residentKey: 'preferred', // 'none', 'discouraged', 'preferred', 'required'
-        userVerification: 'preferred', // 'none', 'discouraged', 'preferred', 'required'
-        authenticatorAttachment: 'platform', // 'cross-platform', 'platform', undefined
-      },
-
-      // Supported pubKeyCredParams
-      supportedAlgorithmIDs: [-7, -257], // ES256 and RS256
-    });
-
-    // Store the challenge for later verification
-    const challenge = options.challenge;
-    challenges.set(challenge, {
-      userId: username,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes
-    });
-
-    // Clean up expired challenges periodically
-    setTimeout(() => {
-      cleanupExpiredChallenges();
-    }, 60 * 1000); // Clean up every minute
-
+    const options = await registrationService.startRegistration({ username, displayName });
     res.status(200).json(options);
   } catch (error) {
     console.error('Start registration error:', error);
@@ -64,55 +27,18 @@ const finishRegistration = async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields in registration response' });
     }
 
-    // Extract the challenge from the response
-    const { clientDataJSON, attestationObject } = response;
-
-    // Find the stored challenge
-    // Note: In a real implementation, you'd need to extract the challenge from the clientDataJSON
-    // For now, we'll use a simplified approach
-    const challenge = JSON.parse(Buffer.from(clientDataJSON, 'base64').toString()).challenge;
-
-    const storedChallenge = challenges.get(challenge);
-
-    if (!storedChallenge) {
-      return res.status(400).json({ error: 'Challenge not found or expired' });
-    }
-
-    // Verify the registration response
-    const verification = await verifyRegistrationResponse({
-      response: {
-        id,
-        rawId,
-        response,
-        type,
-        clientExtensionResults,
-      },
-      expectedChallenge: challenge,
-      expectedOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:3000',
-      expectedRPID: process.env.RP_ID || 'localhost',
+    const result = await registrationService.finishRegistration({
+      id,
+      rawId,
+      response,
+      type,
+      clientExtensionResults
     });
 
-    if (verification.verified && verification.registrationInfo) {
-      // In a real implementation, you would store the credential in your database
-      const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
-
-      // Return success response
-      res.status(200).json({
-        verified: true,
-        credential: {
-          id: credentialID,
-          publicKey: credentialPublicKey.toString('base64'),
-          counter,
-        }
-      });
-
-      // Remove the used challenge
-      challenges.delete(challenge);
+    if (result.verified) {
+      res.status(200).json(result);
     } else {
-      res.status(400).json({
-        verified: false,
-        error: 'Registration verification failed'
-      });
+      res.status(400).json(result);
     }
   } catch (error) {
     console.error('Finish registration error:', error);
@@ -120,21 +46,7 @@ const finishRegistration = async (req, res) => {
   }
 };
 
-// Helper function to clean up expired challenges
-function cleanupExpiredChallenges() {
-  const now = Date.now();
-  for (const [challenge, data] of challenges.entries()) {
-    if (data.expiresAt < now) {
-      challenges.delete(challenge);
-    }
-  }
-}
-
 // Authentication
-const {
-  generateAuthenticationOptions,
-  verifyAuthenticationResponse,
-} = require('../spec');
 const startAuthentication = async (req, res) => {
   try {
     const { username } = req.body;
@@ -143,26 +55,7 @@ const startAuthentication = async (req, res) => {
       return res.status(400).json({ error: 'Username is required' });
     }
 
-    // In a real implementation, you would fetch the user's registered credentials from your database
-    // For this example, we'll simulate having some credentials
-    const allowCredentials = []; // This would come from your database
-
-    // Generate authentication options
-    const options = await generateAuthenticationOptions({
-      rpID: process.env.RP_ID || 'localhost',
-      allowCredentials,
-      userVerification: 'preferred', // 'none', 'discouraged', 'preferred', 'required'
-      timeout: 60000, // 1 minute
-    });
-
-    // Store the challenge for later verification
-    const challenge = options.challenge;
-    challenges.set(challenge, {
-      userId: username,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes
-    });
-
+    const options = await authenticationService.startAuthentication({ username });
     res.status(200).json(options);
   } catch (error) {
     console.error('Start authentication error:', error);
@@ -178,62 +71,18 @@ const finishAuthentication = async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields in authentication response' });
     }
 
-    // Extract the challenge from the response
-    const { clientDataJSON, authenticatorData, signature } = response;
-
-    // Find the stored challenge
-    const challenge = JSON.parse(Buffer.from(clientDataJSON, 'base64').toString()).challenge;
-
-    const storedChallenge = challenges.get(challenge);
-
-    if (!storedChallenge) {
-      return res.status(400).json({ error: 'Challenge not found or expired' });
-    }
-
-    // In a real implementation, you would fetch the credential details from your database
-    // For this example, we'll use mock data
-    const credential = {
-      id: rawId,
-      publicKey: Buffer.from([]), // This would come from your database
-      counter: 0, // This would come from your database
-    };
-
-    // Verify the authentication response
-    const verification = await verifyAuthenticationResponse({
-      response: {
-        id,
-        rawId,
-        response,
-        type,
-        clientExtensionResults,
-      },
-      expectedChallenge: challenge,
-      expectedOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:3000',
-      expectedRPID: process.env.RP_ID || 'localhost',
-      authenticator: {
-        credentialID: credential.id,
-        credentialPublicKey: credential.publicKey,
-        counter: credential.counter,
-      },
+    const result = await authenticationService.finishAuthentication({
+      id,
+      rawId,
+      response,
+      type,
+      clientExtensionResults
     });
 
-    if (verification.verified) {
-      // Update the counter in your database in a real implementation
-      const { authenticationInfo } = verification;
-
-      // Return success response
-      res.status(200).json({
-        verified: true,
-        counter: authenticationInfo.newCounter,
-      });
-
-      // Remove the used challenge
-      challenges.delete(challenge);
+    if (result.verified) {
+      res.status(200).json(result);
     } else {
-      res.status(400).json({
-        verified: false,
-        error: 'Authentication verification failed'
-      });
+      res.status(400).json(result);
     }
   } catch (error) {
     console.error('Finish authentication error:', error);
@@ -356,6 +205,63 @@ const signalCurrentUserDetails = async (req, res) => {
   }
 };
 
+// Deletion functions
+const deleteCredential = async (req, res) => {
+  try {
+    const { credentialId, userId } = req.body;
+
+    if (!credentialId) {
+      return res.status(400).json({ error: 'Credential ID is required' });
+    }
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    const result = await deletionService.deleteCredential(credentialId, userId);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Delete credential error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const deleteAllUserCredentials = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    const result = await deletionService.deleteAllUserCredentials(userId);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Delete all user credentials error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+const revokeCredential = async (req, res) => {
+  try {
+    const { credentialId, userId } = req.body;
+
+    if (!credentialId) {
+      return res.status(400).json({ error: 'Credential ID is required' });
+    }
+
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required' });
+    }
+
+    const result = await deletionService.revokeCredential(credentialId, userId);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Revoke credential error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = {
   startRegistration,
   finishRegistration,
@@ -364,5 +270,8 @@ module.exports = {
   getClientCapabilities,
   signalUnknownCredential,
   signalAllAcceptedCredentials,
-  signalCurrentUserDetails
+  signalCurrentUserDetails,
+  deleteCredential,
+  deleteAllUserCredentials,
+  revokeCredential
 };
