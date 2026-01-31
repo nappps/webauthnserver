@@ -238,6 +238,13 @@ const verificationResult = await fetch('/api/auth/register/finish', {
 4. Add tests for new functionality
 5. Submit a pull request
 
+## Acknowledgements
+
+- Portions of this project were implemented with reference to and inspired by the `@simplewebauthn` libraries:
+  - `@simplewebauthn/server` — https://github.com/simplewebauthn/simplewebauthn (MIT License)
+  - `@simplewebauthn/browser` — https://github.com/simplewebauthn/simplewebauthn (MIT License)
+- Some functionality in `src/spec` and `src/utils/simplewebauthn-server.js` mirrors or was adapted from the `@simplewebauthn` implementation. Original copyright and license notices should be preserved when redistributing those portions.
+
 ## License
 
 MIT
